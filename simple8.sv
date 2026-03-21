@@ -5,7 +5,7 @@
 //  ──────────────
 //  • 8-bit data, 16-bit instructions
 //  • 4 general-purpose registers: R0, R1, R2, R3
-//  • 32 bytes of instruction memory (ROM) — loaded at reset
+//  • 32 words of instruction memory (ROM) — loaded at reset
 //  • 32 bytes of data memory (RAM)
 //  • One flag: Z (zero) — set when a result equals zero
 //  • 11 instructions (see table below)
