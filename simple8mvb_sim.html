@@ -1,0 +1,641 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Simple8MVB — CPU Simulator</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --panel: #16213e;
+    --border: #0f3460;
+    --accent: #e94560;
+    --text: #eee;
+    --dim: #888;
+    --hi: #53d8fb;
+    --green: #4ec879;
+    --yellow: #f0c040;
+    --orange: #e8833a;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 16px;
+  }
+  h1 { font-size: 1.3rem; color: var(--hi); margin-bottom: 12px; }
+  h2 { font-size: 0.85rem; color: var(--accent); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 340px 1fr 280px;
+    grid-template-rows: auto 1fr;
+    gap: 12px;
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+
+  .controls {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  button {
+    font-family: inherit;
+    font-size: 0.85rem;
+    padding: 8px 18px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover { background: var(--border); }
+  button.primary { background: var(--accent); border-color: var(--accent); font-weight: bold; }
+  button.primary:hover { background: #c73a50; }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+  }
+
+  /* --- Program listing --- */
+  .program { overflow-y: auto; max-height: 70vh; }
+  .program table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+  .program td { padding: 3px 6px; white-space: nowrap; }
+  .program tr.current { background: rgba(233,69,96,0.25); }
+  .program tr.current td:first-child { color: var(--accent); font-weight: bold; }
+  .program .addr { color: var(--dim); }
+  .program .hex { color: var(--yellow); }
+  .program .asm { color: var(--text); }
+
+  /* --- State panel --- */
+  .state-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .state-item {
+    background: rgba(0,0,0,0.25);
+    border-radius: 4px;
+    padding: 8px;
+    text-align: center;
+  }
+  .state-item .label { font-size: 0.7rem; color: var(--dim); margin-bottom: 2px; }
+  .state-item .value { font-size: 1.3rem; color: var(--hi); font-weight: bold; }
+  .state-item.changed .value { color: var(--yellow); }
+  .state-item.wide { grid-column: 1 / -1; }
+
+  /* --- Memory view --- */
+  .memview { overflow-y: auto; max-height: 70vh; }
+  .memview table { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
+  .memview td, .memview th { padding: 2px 4px; text-align: center; }
+  .memview th { color: var(--dim); font-weight: normal; }
+  .memview .mem-cell { color: var(--dim); min-width: 22px; }
+  .memview .mem-cell.nonzero { color: var(--text); }
+  .memview .mem-cell.highlight { background: rgba(83,216,251,0.2); color: var(--hi); font-weight: bold; }
+  .memview .mem-cell.write-hi { background: rgba(233,69,96,0.3); color: var(--accent); }
+  .memview .row-addr { color: var(--yellow); text-align: left; }
+
+  /* --- Pipeline / FSM --- */
+  .pipeline {
+    display: flex;
+    gap: 6px;
+    margin: 10px 0;
+    flex-wrap: wrap;
+  }
+  .pipe-stage {
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    background: rgba(0,0,0,0.3);
+    color: var(--dim);
+    border: 1px solid transparent;
+  }
+  .pipe-stage.active {
+    color: var(--green);
+    border-color: var(--green);
+    background: rgba(78,200,121,0.15);
+    font-weight: bold;
+  }
+
+  /* --- Log --- */
+  .log {
+    grid-column: 1 / -1;
+    max-height: 120px;
+    overflow-y: auto;
+    font-size: 0.72rem;
+    color: var(--dim);
+    line-height: 1.5;
+  }
+  .log .cycle-marker { color: var(--accent); }
+  .log .action { color: var(--green); }
+
+  .speed-control { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .speed-control label { font-size: 0.75rem; color: var(--dim); }
+  .speed-control input[type=range] { width: 80px; }
+
+  .cycle-counter { font-size: 0.85rem; color: var(--dim); }
+  .cycle-counter span { color: var(--yellow); font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>Simple8MVB — Byte-Addressable Multicycle CPU Simulator</h1>
+
+<div class="layout">
+  <!-- Controls -->
+  <div class="controls">
+    <button class="primary" id="btn-step" title="Step one clock cycle">Step</button>
+    <button id="btn-run" title="Auto-run">Run</button>
+    <button id="btn-pause" title="Pause auto-run" style="display:none">Pause</button>
+    <button id="btn-step-instr" title="Step one full instruction">Step Instruction</button>
+    <button id="btn-reset" title="Reset CPU">Reset</button>
+    <div class="cycle-counter">Cycle: <span id="cycle-num">0</span></div>
+    <div class="speed-control">
+      <label>Speed</label>
+      <input type="range" id="speed" min="1" max="10" value="5">
+    </div>
+  </div>
+
+  <!-- Program listing -->
+  <div class="panel program" id="program-panel">
+    <h2>Program</h2>
+    <table><tbody id="program-body"></tbody></table>
+  </div>
+
+  <!-- Center: State -->
+  <div class="panel">
+    <h2>CPU State</h2>
+    <div class="pipeline" id="pipeline"></div>
+    <div class="state-grid" id="state-grid"></div>
+    <h2 style="margin-top:14px">Decoded Instruction</h2>
+    <div id="decoded" style="font-size:0.85rem; margin-top:6px; color:var(--green); min-height:1.5em;"></div>
+    <h2 style="margin-top:14px">Activity Log</h2>
+    <div class="log" id="log"></div>
+  </div>
+
+  <!-- Memory -->
+  <div class="panel memview" id="mem-panel">
+    <h2>Memory (256 bytes)</h2>
+    <table><thead id="mem-head"></thead><tbody id="mem-body"></tbody></table>
+  </div>
+</div>
+
+<script>
+// ── CPU Simulation ─────────────────────────────────────────────────
+
+const OPNAMES = ['NOP','ADD','SUB','AND','OR','XOR','LDI','LD','ST','JMP','JZ'];
+const STATES = ['FETCH_HI','FETCH_LO','EXECUTE','MEM_READ','WRITEBACK'];
+
+function createCPU() {
+  const cpu = {
+    pc: 0,
+    reg: [0, 0, 0, 0],
+    z: 0,
+    mem: new Uint8Array(256),
+    state: 0, // FETCH_HI
+    instr_hi: 0,
+    instr_lo: 0,
+    mem_read: 0,
+    cycle: 0,
+    log: [],
+    prevState: null, // for change detection
+    memAccess: null,  // {addr, type:'read'|'write'} for highlighting
+  };
+  return cpu;
+}
+
+function loadProgram(cpu) {
+  // Fibonacci: R0=prev, R1=curr. Halts when R1 reaches 233.
+  // Final value copied to R3, stored to mem[0x82].
+  const prog = [
+    [0x00, 0x60, 0x00], // LDI R0, 0       ; a = 0 (prev)
+    [0x02, 0x64, 0x01], // LDI R1, 1       ; b = 1 (curr)
+    // loop:
+    [0x04, 0x84, 0x80], // ST [0x80], R1   ; store current fib
+    [0x06, 0x80, 0x81], // ST [0x81], R0   ; store prev fib
+    // check if R1 == 233
+    [0x08, 0x6C, 0xE9], // LDI R3, 233     ; R3 = 233
+    [0x0A, 0x5A, 0x00], // XOR R2, R2      ; R2 = 0
+    [0x0C, 0x19, 0x00], // ADD R2, R1      ; R2 = copy of R1
+    [0x0E, 0x2B, 0x00], // SUB R2, R3      ; R2 = R1 - 233
+    [0x10, 0xA0, 0x1E], // JZ 0x1E         ; if R1 was 233, halt
+    // compute next fib
+    [0x12, 0x5A, 0x00], // XOR R2, R2      ; R2 = 0
+    [0x14, 0x19, 0x00], // ADD R2, R1      ; R2 = b (save copy)
+    [0x16, 0x14, 0x00], // ADD R1, R0      ; R1 = a + b (next fib)
+    [0x18, 0x50, 0x00], // XOR R0, R0      ; R0 = 0
+    [0x1A, 0x12, 0x00], // ADD R0, R2      ; R0 = saved b (new prev)
+    [0x1C, 0x90, 0x04], // JMP 0x04        ; loop
+    // halt: copy R1 to R3, store, and stop
+    [0x1E, 0x5F, 0x00], // XOR R3, R3      ; R3 = 0
+    [0x20, 0x1D, 0x00], // ADD R3, R1      ; R3 = 233
+    [0x22, 0x8C, 0x82], // ST [0x82], R3   ; store final value
+    [0x24, 0x90, 0x24], // JMP 0x24        ; halt (self-loop)
+  ];
+  for (const [addr, hi, lo] of prog) {
+    cpu.mem[addr] = hi;
+    cpu.mem[addr + 1] = lo;
+  }
+}
+
+function decode(hi, lo) {
+  const opcode = (hi >> 4) & 0xF;
+  const rd = (hi >> 2) & 0x3;
+  const rs = hi & 0x3;
+  const imm8 = lo;
+  return { opcode, rd, rs, imm8 };
+}
+
+function disassemble(hi, lo) {
+  const { opcode, rd, rs, imm8 } = decode(hi, lo);
+  if (opcode > 0xA) return `??? (0x${opcode.toString(16).toUpperCase()})`;
+  const name = OPNAMES[opcode];
+  switch (opcode) {
+    case 0x0: return 'NOP';
+    case 0x1: case 0x2: case 0x3: case 0x4: case 0x5:
+      return `${name} R${rd}, R${rs}`;
+    case 0x6: return `LDI R${rd}, ${imm8}`;
+    case 0x7: return `LD R${rd}, [0x${imm8.toString(16).toUpperCase().padStart(2,'0')}]`;
+    case 0x8: return `ST [0x${imm8.toString(16).toUpperCase().padStart(2,'0')}], R${rd}`;
+    case 0x9: return `JMP 0x${imm8.toString(16).toUpperCase().padStart(2,'0')}`;
+    case 0xA: return `JZ 0x${imm8.toString(16).toUpperCase().padStart(2,'0')}`;
+  }
+}
+
+function hex2(v) { return v.toString(16).toUpperCase().padStart(2, '0'); }
+
+function saveSnapshot(cpu) {
+  cpu.prevState = {
+    pc: cpu.pc,
+    reg: [...cpu.reg],
+    z: cpu.z,
+    state: cpu.state,
+    instr_hi: cpu.instr_hi,
+    instr_lo: cpu.instr_lo,
+  };
+}
+
+function stepCPU(cpu) {
+  saveSnapshot(cpu);
+  cpu.memAccess = null;
+  const logEntry = [];
+
+  const state = cpu.state;
+
+  switch (state) {
+    case 0: { // FETCH_HI
+      cpu.instr_hi = cpu.mem[cpu.pc];
+      cpu.state = 1;
+      cpu.memAccess = { addr: cpu.pc, type: 'read' };
+      logEntry.push(`Read mem[0x${hex2(cpu.pc)}] → 0x${hex2(cpu.instr_hi)} (instr high byte)`);
+      break;
+    }
+    case 1: { // FETCH_LO
+      cpu.instr_lo = cpu.mem[cpu.pc + 1];
+      cpu.state = 2;
+      cpu.memAccess = { addr: cpu.pc + 1, type: 'read' };
+      logEntry.push(`Read mem[0x${hex2(cpu.pc+1)}] → 0x${hex2(cpu.instr_lo)} (instr low byte)`);
+      const d = disassemble(cpu.instr_hi, cpu.instr_lo);
+      logEntry.push(`Decoded: ${d}`);
+      break;
+    }
+    case 2: { // EXECUTE
+      const { opcode, rd, rs, imm8 } = decode(cpu.instr_hi, cpu.instr_lo);
+      switch (opcode) {
+        case 0x0: // NOP
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          logEntry.push('NOP — advance PC');
+          break;
+        case 0x1: { // ADD
+          const result = (cpu.reg[rd] + cpu.reg[rs]) & 0xFF;
+          logEntry.push(`ADD R${rd}(${cpu.reg[rd]}) + R${rs}(${cpu.reg[rs]}) = ${result}`);
+          cpu.reg[rd] = result;
+          cpu.z = result === 0 ? 1 : 0;
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x2: { // SUB
+          const result = (cpu.reg[rd] - cpu.reg[rs]) & 0xFF;
+          logEntry.push(`SUB R${rd}(${cpu.reg[rd]}) - R${rs}(${cpu.reg[rs]}) = ${result}`);
+          cpu.reg[rd] = result;
+          cpu.z = result === 0 ? 1 : 0;
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x3: { // AND
+          const result = cpu.reg[rd] & cpu.reg[rs];
+          logEntry.push(`AND R${rd} & R${rs} = ${result}`);
+          cpu.reg[rd] = result;
+          cpu.z = result === 0 ? 1 : 0;
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x4: { // OR
+          const result = cpu.reg[rd] | cpu.reg[rs];
+          logEntry.push(`OR R${rd} | R${rs} = ${result}`);
+          cpu.reg[rd] = result;
+          cpu.z = result === 0 ? 1 : 0;
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x5: { // XOR
+          const result = cpu.reg[rd] ^ cpu.reg[rs];
+          logEntry.push(`XOR R${rd} ^ R${rs} = ${result}`);
+          cpu.reg[rd] = result;
+          cpu.z = result === 0 ? 1 : 0;
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x6: { // LDI
+          logEntry.push(`LDI R${rd} ← ${imm8}`);
+          cpu.reg[rd] = imm8;
+          cpu.z = imm8 === 0 ? 1 : 0;
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x7: { // LD — go to MEM_READ
+          logEntry.push(`LD R${rd} ← mem[0x${hex2(imm8)}] — issuing read`);
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 3; // MEM_READ
+          break;
+        }
+        case 0x8: { // ST
+          logEntry.push(`ST mem[0x${hex2(imm8)}] ← R${rd}(${cpu.reg[rd]})`);
+          cpu.mem[imm8] = cpu.reg[rd];
+          cpu.memAccess = { addr: imm8, type: 'write' };
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x9: { // JMP
+          logEntry.push(`JMP → 0x${hex2(imm8)}`);
+          cpu.pc = imm8;
+          cpu.state = 0;
+          break;
+        }
+        case 0xA: { // JZ
+          if (cpu.z) {
+            logEntry.push(`JZ taken (Z=1) → 0x${hex2(imm8)}`);
+            cpu.pc = imm8;
+          } else {
+            logEntry.push(`JZ not taken (Z=0), advance PC`);
+            cpu.pc = (cpu.pc + 2) & 0xFF;
+          }
+          cpu.state = 0;
+          break;
+        }
+        default:
+          logEntry.push(`Unknown opcode 0x${opcode.toString(16)} — treated as NOP`);
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+      }
+      break;
+    }
+    case 3: { // MEM_READ
+      const { imm8, rd } = decode(cpu.instr_hi, cpu.instr_lo);
+      cpu.mem_read = cpu.mem[imm8];
+      cpu.memAccess = { addr: imm8, type: 'read' };
+      logEntry.push(`MEM_READ: mem[0x${hex2(imm8)}] → ${cpu.mem_read}`);
+      cpu.state = 4;
+      break;
+    }
+    case 4: { // WRITEBACK
+      const { rd } = decode(cpu.instr_hi, cpu.instr_lo);
+      logEntry.push(`WRITEBACK: R${rd} ← ${cpu.mem_read}`);
+      cpu.reg[rd] = cpu.mem_read;
+      cpu.z = cpu.mem_read === 0 ? 1 : 0;
+      cpu.state = 0;
+      break;
+    }
+  }
+
+  cpu.cycle++;
+  cpu.log.push({ cycle: cpu.cycle, state: STATES[state], lines: logEntry });
+}
+
+// ── UI Rendering ───────────────────────────────────────────────────
+
+let cpu = createCPU();
+loadProgram(cpu);
+
+// Known instruction addresses for listing
+function getInstructions(cpu) {
+  const instrs = [];
+  // Scan memory for all instruction pairs (show occupied pairs)
+  // We'll show every even address where there's something non-zero or it's reachable
+  const shown = new Set();
+  // Always show the program area and any address the PC has been at
+  for (let a = 0; a < 256; a += 2) {
+    if (cpu.mem[a] !== 0 || cpu.mem[a+1] !== 0) {
+      shown.add(a);
+    }
+  }
+  shown.add(cpu.pc & 0xFE); // current PC aligned
+  for (const addr of [...shown].sort((a,b) => a - b)) {
+    const hi = cpu.mem[addr];
+    const lo = cpu.mem[addr + 1];
+    instrs.push({ addr, hi, lo, asm: disassemble(hi, lo) });
+  }
+  return instrs;
+}
+
+function renderProgram() {
+  const body = document.getElementById('program-body');
+  const instrs = getInstructions(cpu);
+  const pcAligned = cpu.pc & 0xFE;
+  body.innerHTML = instrs.map(i => {
+    const cur = i.addr === pcAligned ? ' class="current"' : '';
+    const arrow = i.addr === pcAligned ? '►' : ' ';
+    return `<tr${cur}>
+      <td class="addr">${arrow} 0x${hex2(i.addr)}</td>
+      <td class="hex">${hex2(i.hi)} ${hex2(i.lo)}</td>
+      <td class="asm">${i.asm}</td>
+    </tr>`;
+  }).join('');
+
+  // Scroll current into view
+  const cur = body.querySelector('.current');
+  if (cur) cur.scrollIntoView({ block: 'nearest' });
+}
+
+function renderState() {
+  const prev = cpu.prevState || {};
+  const items = [
+    { label: 'PC', value: `0x${hex2(cpu.pc)}`, changed: prev.pc !== undefined && prev.pc !== cpu.pc },
+    { label: 'State', value: STATES[cpu.state], changed: prev.state !== undefined && prev.state !== cpu.state },
+    { label: 'R0', value: cpu.reg[0], changed: prev.reg && prev.reg[0] !== cpu.reg[0] },
+    { label: 'R1', value: cpu.reg[1], changed: prev.reg && prev.reg[1] !== cpu.reg[1] },
+    { label: 'R2', value: cpu.reg[2], changed: prev.reg && prev.reg[2] !== cpu.reg[2] },
+    { label: 'R3', value: cpu.reg[3], changed: prev.reg && prev.reg[3] !== cpu.reg[3] },
+    { label: 'Z Flag', value: cpu.z, changed: prev.z !== undefined && prev.z !== cpu.z },
+    { label: 'Instr', value: `${hex2(cpu.instr_hi)} ${hex2(cpu.instr_lo)}`, changed: prev.instr_hi !== undefined && (prev.instr_hi !== cpu.instr_hi || prev.instr_lo !== cpu.instr_lo) },
+  ];
+
+  const grid = document.getElementById('state-grid');
+  grid.innerHTML = items.map(i =>
+    `<div class="state-item${i.changed ? ' changed' : ''}">
+      <div class="label">${i.label}</div>
+      <div class="value">${i.value}</div>
+    </div>`
+  ).join('');
+
+  // Pipeline
+  const pipeline = document.getElementById('pipeline');
+  pipeline.innerHTML = STATES.map((s, idx) =>
+    `<div class="pipe-stage${idx === cpu.state ? ' active' : ''}">${s}</div>`
+  ).join('');
+
+  // Decoded instruction
+  const decoded = document.getElementById('decoded');
+  if (cpu.instr_hi !== 0 || cpu.instr_lo !== 0) {
+    decoded.textContent = disassemble(cpu.instr_hi, cpu.instr_lo);
+  } else {
+    decoded.textContent = 'NOP';
+  }
+
+  document.getElementById('cycle-num').textContent = cpu.cycle;
+}
+
+function renderMemory() {
+  const head = document.getElementById('mem-head');
+  const body = document.getElementById('mem-body');
+
+  head.innerHTML = '<tr><th></th>' + Array.from({length:16}, (_,i) => `<th>x${i.toString(16).toUpperCase()}</th>`).join('') + '</tr>';
+
+  const accessAddr = cpu.memAccess ? cpu.memAccess.addr : -1;
+  const accessType = cpu.memAccess ? cpu.memAccess.type : '';
+  // Also highlight PC fetch addresses
+  const fetchAddrs = new Set();
+  if (cpu.state === 1) fetchAddrs.add(cpu.pc); // just fetched hi
+  if (cpu.state === 2) { fetchAddrs.add(cpu.pc); fetchAddrs.add(cpu.pc + 1); } // just fetched both
+
+  let html = '';
+  for (let row = 0; row < 16; row++) {
+    const baseAddr = row * 16;
+    html += `<tr><td class="row-addr">${hex2(baseAddr)}</td>`;
+    for (let col = 0; col < 16; col++) {
+      const addr = baseAddr + col;
+      const val = cpu.mem[addr];
+      let cls = 'mem-cell';
+      if (val !== 0) cls += ' nonzero';
+      if (addr === accessAddr) {
+        cls += accessType === 'write' ? ' write-hi' : ' highlight';
+      }
+      html += `<td class="${cls}">${hex2(val)}</td>`;
+    }
+    html += '</tr>';
+  }
+  body.innerHTML = html;
+}
+
+function renderLog() {
+  const el = document.getElementById('log');
+  // Show last 30 entries
+  const recent = cpu.log.slice(-30);
+  el.innerHTML = recent.map(e =>
+    `<div><span class="cycle-marker">C${e.cycle} [${e.state}]</span> ${e.lines.map(l => `<span class="action">${l}</span>`).join(' | ')}</div>`
+  ).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function renderAll() {
+  renderProgram();
+  renderState();
+  renderMemory();
+  renderLog();
+}
+
+// Initial render
+renderAll();
+
+// ── Controls ───────────────────────────────────────────────────────
+
+let running = false;
+let runTimer = null;
+
+document.getElementById('btn-step').addEventListener('click', () => {
+  stepCPU(cpu);
+  renderAll();
+});
+
+document.getElementById('btn-step-instr').addEventListener('click', () => {
+  // Step until we return to FETCH_HI (complete one full instruction)
+  const maxSteps = 10; // safety limit
+  for (let i = 0; i < maxSteps; i++) {
+    stepCPU(cpu);
+    if (cpu.state === 0) break; // back to FETCH_HI
+  }
+  renderAll();
+});
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  stopRun();
+  cpu = createCPU();
+  loadProgram(cpu);
+  renderAll();
+});
+
+function getDelay() {
+  const speed = parseInt(document.getElementById('speed').value);
+  // speed 1 = 1000ms, speed 10 = 50ms
+  return Math.round(1050 - speed * 100);
+}
+
+function startRun() {
+  running = true;
+  document.getElementById('btn-run').style.display = 'none';
+  document.getElementById('btn-pause').style.display = '';
+  tick();
+}
+
+function stopRun() {
+  running = false;
+  document.getElementById('btn-run').style.display = '';
+  document.getElementById('btn-pause').style.display = 'none';
+  if (runTimer) { clearTimeout(runTimer); runTimer = null; }
+}
+
+function tick() {
+  if (!running) return;
+  stepCPU(cpu);
+  renderAll();
+  // Detect infinite loop (JMP to self — target equals JMP's own address)
+  if (cpu.prevState && cpu.prevState.state === 2 && cpu.state === 0) {
+    const { opcode } = decode(cpu.instr_hi, cpu.instr_lo);
+    if (opcode === 0x9 && cpu.pc === cpu.prevState.pc) {
+      stopRun();
+      return;
+    }
+  }
+  runTimer = setTimeout(tick, getDelay());
+}
+
+document.getElementById('btn-run').addEventListener('click', startRun);
+document.getElementById('btn-pause').addEventListener('click', stopRun);
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.key === ' ' || e.key === 'n') { e.preventDefault(); stepCPU(cpu); renderAll(); }
+  if (e.key === 'i') { e.preventDefault(); document.getElementById('btn-step-instr').click(); }
+  if (e.key === 'r') { e.preventDefault(); if (running) stopRun(); else startRun(); }
+});
+</script>
+</body>
+</html>
