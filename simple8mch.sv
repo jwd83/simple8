@@ -4,7 +4,7 @@
 //  Quick overview
 //  ──────────────
 //  • Same instruction set as Simple8
-//  • Multicycle control: fetch, decode, execute, memory, writeback
+//  • Multicycle control: fetch/decode, execute, memory, writeback
 //  • Harvard organization: separate instruction ROM and data RAM
 //  • Memory access is synchronous, which maps more naturally to FPGA block RAM
 //
@@ -61,8 +61,7 @@ module simple8mch_cpu (
     // ─── Multicycle control ──────────────────────────────────────────────
 
     typedef enum logic [2:0] {
-        FETCH,                          // read instruction memory
-        DECODE,                         // split instruction into fields
+        FETCH,                          // read instruction memory; fields decode combinationally
         EXECUTE,                        // do ALU work, stores, and branches
         MEM_READ,                       // wait for a synchronous data read
         WRITEBACK                       // finish a load
@@ -81,7 +80,6 @@ module simple8mch_cpu (
 
     // ─── Internal registers ──────────────────────────────────────────────
 
-    logic [7:0]  alu_result;            // result from an ALU instruction
     logic [7:0]  mem_read;              // value returned by a load
 
     assign opcode = instr[15:12];
@@ -101,7 +99,6 @@ module simple8mch_cpu (
             z_flag   <= 1'b0;
             state    <= FETCH;
             instr    <= 16'h0000;
-            alu_result <= 8'd0;
             mem_read <= 8'd0;
 
             regfile[0] <= 8'd0;
@@ -138,18 +135,13 @@ module simple8mch_cpu (
             case (state)
 
                 // -----------------------------------------------------
-                // FETCH — synchronous instruction read
+                // FETCH — latch instruction; decoded fields are
+                //         continuous assigns, so they settle
+                //         combinationally before the next clock edge.
                 // -----------------------------------------------------
                 FETCH: begin
                     instr  <= instr_mem[pc];
-                    state  <= DECODE;
-                end
-
-                // -----------------------------------------------------
-                // DECODE — break the instruction into fields
-                // -----------------------------------------------------
-                DECODE: begin
-                    state <= EXECUTE;
+                    state  <= EXECUTE;
                 end
 
                 // -----------------------------------------------------
@@ -163,7 +155,6 @@ module simple8mch_cpu (
                         end
 
                         4'h1: begin // ADD rd, rs
-                            alu_result      <= regfile[rd_idx] + regfile[rs_idx];
                             regfile[rd_idx] <= regfile[rd_idx] + regfile[rs_idx];
                             z_flag          <= ((regfile[rd_idx] + regfile[rs_idx]) == 8'd0);
                             pc              <= pc + 5'd1;
@@ -171,7 +162,6 @@ module simple8mch_cpu (
                         end
 
                         4'h2: begin // SUB rd, rs
-                            alu_result      <= regfile[rd_idx] - regfile[rs_idx];
                             regfile[rd_idx] <= regfile[rd_idx] - regfile[rs_idx];
                             z_flag          <= ((regfile[rd_idx] - regfile[rs_idx]) == 8'd0);
                             pc              <= pc + 5'd1;
@@ -179,7 +169,6 @@ module simple8mch_cpu (
                         end
 
                         4'h3: begin // AND rd, rs
-                            alu_result      <= regfile[rd_idx] & regfile[rs_idx];
                             regfile[rd_idx] <= regfile[rd_idx] & regfile[rs_idx];
                             z_flag          <= ((regfile[rd_idx] & regfile[rs_idx]) == 8'd0);
                             pc              <= pc + 5'd1;
@@ -187,7 +176,6 @@ module simple8mch_cpu (
                         end
 
                         4'h4: begin // OR rd, rs
-                            alu_result      <= regfile[rd_idx] | regfile[rs_idx];
                             regfile[rd_idx] <= regfile[rd_idx] | regfile[rs_idx];
                             z_flag          <= ((regfile[rd_idx] | regfile[rs_idx]) == 8'd0);
                             pc              <= pc + 5'd1;
@@ -195,7 +183,6 @@ module simple8mch_cpu (
                         end
 
                         4'h5: begin // XOR rd, rs
-                            alu_result      <= regfile[rd_idx] ^ regfile[rs_idx];
                             regfile[rd_idx] <= regfile[rd_idx] ^ regfile[rs_idx];
                             z_flag          <= ((regfile[rd_idx] ^ regfile[rs_idx]) == 8'd0);
                             pc              <= pc + 5'd1;

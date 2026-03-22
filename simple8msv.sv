@@ -4,7 +4,7 @@
 //  Quick overview
 //  ──────────────
 //  • Same instruction set as Simple8
-//  • Multicycle control: fetch, decode, execute, memory, writeback
+//  • Multicycle control: fetch/decode, execute, memory, writeback
 //  • Von Neumann organization: one shared memory for code and data
 //  • One memory port means instruction fetch and data access happen in
 //    different cycles, which is a natural fit for multicycle control
@@ -63,8 +63,7 @@ module simple8msv_cpu (
     // ─── Multicycle control ──────────────────────────────────────────────
 
     typedef enum logic [2:0] {
-        FETCH,                          // read shared memory for instruction
-        DECODE,                         // split instruction into fields
+        FETCH,                          // read shared memory; fields decode combinationally
         EXECUTE,                        // do ALU work, stores, and branches
         MEM_READ,                       // wait for a synchronous data read
         WRITEBACK                       // finish a load
@@ -83,7 +82,6 @@ module simple8msv_cpu (
 
     // ─── Internal registers ──────────────────────────────────────────────
 
-    logic [7:0]  alu_result;            // result from an ALU instruction
     logic [7:0]  mem_read;              // value returned by a load
 
     assign opcode = instr[15:12];
@@ -103,7 +101,6 @@ module simple8msv_cpu (
             z_flag     <= 1'b0;
             state      <= FETCH;
             instr      <= 16'h0000;
-            alu_result <= 8'd0;
             mem_read   <= 8'd0;
 
             regfile[0] <= 8'd0;
@@ -132,23 +129,17 @@ module simple8msv_cpu (
             mem[5'h08] <= 16'hA00A;     // JZ  0x0A
             mem[5'h09] <= 16'h9009;     // JMP 0x09
             mem[5'h0A] <= 16'h0000;     // NOP
-            mem[5'h10] <= 16'h0000;     // data scratch location
 
         end else begin
             case (state)
 
                 // -----------------------------------------------------
-                // FETCH — read an instruction from shared memory
+                // FETCH — latch instruction; decoded fields are
+                //         continuous assigns, so they settle
+                //         combinationally before the next clock edge.
                 // -----------------------------------------------------
                 FETCH: begin
                     instr <= mem[pc];
-                    state <= DECODE;
-                end
-
-                // -----------------------------------------------------
-                // DECODE — break the instruction into fields
-                // -----------------------------------------------------
-                DECODE: begin
                     state <= EXECUTE;
                 end
 
@@ -163,7 +154,6 @@ module simple8msv_cpu (
                         end
 
                         4'h1: begin // ADD rd, rs
-                            alu_result      <= regfile[rd_idx] + regfile[rs_idx];
                             regfile[rd_idx] <= regfile[rd_idx] + regfile[rs_idx];
                             z_flag          <= ((regfile[rd_idx] + regfile[rs_idx]) == 8'd0);
                             pc              <= pc + 5'd1;
@@ -171,7 +161,6 @@ module simple8msv_cpu (
                         end
 
                         4'h2: begin // SUB rd, rs
-                            alu_result      <= regfile[rd_idx] - regfile[rs_idx];
                             regfile[rd_idx] <= regfile[rd_idx] - regfile[rs_idx];
                             z_flag          <= ((regfile[rd_idx] - regfile[rs_idx]) == 8'd0);
                             pc              <= pc + 5'd1;
@@ -179,7 +168,6 @@ module simple8msv_cpu (
                         end
 
                         4'h3: begin // AND rd, rs
-                            alu_result      <= regfile[rd_idx] & regfile[rs_idx];
                             regfile[rd_idx] <= regfile[rd_idx] & regfile[rs_idx];
                             z_flag          <= ((regfile[rd_idx] & regfile[rs_idx]) == 8'd0);
                             pc              <= pc + 5'd1;
@@ -187,7 +175,6 @@ module simple8msv_cpu (
                         end
 
                         4'h4: begin // OR rd, rs
-                            alu_result      <= regfile[rd_idx] | regfile[rs_idx];
                             regfile[rd_idx] <= regfile[rd_idx] | regfile[rs_idx];
                             z_flag          <= ((regfile[rd_idx] | regfile[rs_idx]) == 8'd0);
                             pc              <= pc + 5'd1;
@@ -195,7 +182,6 @@ module simple8msv_cpu (
                         end
 
                         4'h5: begin // XOR rd, rs
-                            alu_result      <= regfile[rd_idx] ^ regfile[rs_idx];
                             regfile[rd_idx] <= regfile[rd_idx] ^ regfile[rs_idx];
                             z_flag          <= ((regfile[rd_idx] ^ regfile[rs_idx]) == 8'd0);
                             pc              <= pc + 5'd1;
