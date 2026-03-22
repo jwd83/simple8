@@ -1,5 +1,5 @@
 // ============================================================================
-//  Simple8MSVB — Byte-addressable multicycle von Neumann CPU
+//  Simple8MSVB — A tiny byte-addressable multicycle von Neumann CPU
 //
 //  Quick overview
 //  ──────────────
@@ -20,7 +20,7 @@
 //
 //  Data loads and stores operate on a single byte.
 //
-//  Instruction encoding (same logical format, stored across two bytes)
+//  Instruction encoding (stored across two bytes, big-endian)
 //  ──────────────────────────────────────────────────────
 //   High byte (mem[PC]):    7  6  5  4 | 3  2 | 1  0
 //                              opcode  |  rd  |  rs
@@ -38,11 +38,11 @@
 //   0x3     AND    rd = rd & rs            Z
 //   0x4     OR     rd = rd | rs            Z
 //   0x5     XOR    rd = rd ^ rs            Z
-//   0x6     LDI    rd = imm8              Z
+//   0x6     LDI    rd = imm8               Z
 //   0x7     LD     rd = MEM[imm8]          Z
 //   0x8     ST     MEM[imm8] = rd          —
-//   0x9     JMP    pc = imm8              —
-//   0xA     JZ     if Z: pc = imm8        —
+//   0x9     JMP    pc = imm8               —
+//   0xA     JZ     if Z: pc = imm8         —
 //  ──────────────────────────────────────────────────────
 //
 //  Note: All addresses (LD, ST, JMP, JZ) use the full 8-bit immediate,
@@ -80,18 +80,18 @@ module simple8msvb_cpu (
 
     // ─── Instruction register and decoded fields ────────────────────────
 
-    logic [7:0]  instr_hi;             // high byte (opcode | rd | rs)
-    logic [7:0]  instr_lo;             // low byte  (imm8)
+    logic [7:0]  instr_hi;              // high byte (opcode | rd | rs)
+    logic [7:0]  instr_lo;              // low byte  (imm8)
 
-    logic [3:0]  opcode;               // high byte [7:4]
-    logic [1:0]  rd_idx;               // high byte [3:2]
-    logic [1:0]  rs_idx;               // high byte [1:0]
-    logic [7:0]  imm8;                 // low byte
-    logic [7:0]  addr;                 // alias for imm8 (full byte address)
+    logic [3:0]  opcode;                // high byte [7:4]
+    logic [1:0]  rd_idx;                // high byte [3:2]
+    logic [1:0]  rs_idx;                // high byte [1:0]
+    logic [7:0]  imm8;                  // low byte
+    logic [7:0]  addr;                  // alias for imm8 (full byte address)
 
     // ─── Internal registers ──────────────────────────────────────────────
 
-    logic [7:0]  mem_read;             // value returned by a load
+    logic [7:0]  mem_read;              // value returned by a load
 
     assign opcode = instr_hi[7:4];
     assign rd_idx = instr_hi[3:2];
