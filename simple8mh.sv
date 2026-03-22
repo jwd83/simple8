@@ -1,5 +1,5 @@
 // ============================================================================
-//  Simple8MCH — A tiny multicycle Harvard CPU for learning computer architecture
+//  Simple8MH — A tiny multicycle Harvard CPU for learning computer architecture
 //
 //  Quick overview
 //  ──────────────
@@ -42,7 +42,7 @@
 //
 // ============================================================================
 
-module simple8mch_cpu (
+module simple8mh_cpu (
     input  logic clk,
     input  logic reset
 );

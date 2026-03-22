@@ -1,5 +1,5 @@
 // ============================================================================
-//  Simple8MSVB — A tiny byte-addressable multicycle von Neumann CPU
+//  Simple8MVB — A tiny byte-addressable multicycle von Neumann CPU
 //
 //  Quick overview
 //  ──────────────
@@ -51,7 +51,7 @@
 //
 // ============================================================================
 
-module simple8msvb_cpu (
+module simple8mvb_cpu (
     input  logic clk,
     input  logic reset
 );

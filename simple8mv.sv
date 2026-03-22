@@ -1,5 +1,5 @@
 // ============================================================================
-//  Simple8MSV — A tiny multicycle von Neumann CPU for learning architecture
+//  Simple8MV — A tiny multicycle von Neumann CPU for learning architecture
 //
 //  Quick overview
 //  ──────────────
@@ -45,7 +45,7 @@
 //
 // ============================================================================
 
-module simple8msv_cpu (
+module simple8mv_cpu (
     input  logic clk,
     input  logic reset
 );
