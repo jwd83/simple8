@@ -1,10 +1,21 @@
 # Simple8
 
-A tiny single-cycle 8-bit CPU written in SystemVerilog, designed for learning computer architecture.
+A series of tiny 8-bit CPU written in SystemVerilog, designed for learning computer architecture.
 
-## Overview
+## Project Overview
 
-Simple8 is a minimal but complete CPU that demonstrates fetch-decode-execute-writeback in a single clock cycle. It's intended for use with [svsim](https://github.com/jwd83/svsim) or any SystemVerilog simulator.
+The designs are organized as follows with increasing complexity:
+
+* Section I: Harvard - 
+  * simple8.sv - A simple 8 bit single-cycle CPU, separate program ROM and data RAM (Harvard architecture)
+  * simple8mh.sv - A simple 8 bit multi-cycle CPU, separate program ROM and data RAM (Harvard architecture)
+* Section II: von Neumann
+  * simple8mv.sv - A simple 8 bit multi-cycle CPU, unified program and data memory (von Neumann architecture)
+  * simple8mvb.sv - A simple 8 bit multi-cycle CPU, unified byte adressable program and data memory (von Neumann architecture)
+
+
+## simple8.sv Overview
+The base Simple8 is a minimal but complete CPU that demonstrates fetch-decode-execute-writeback in a single clock cycle. It's intended for use with [svsim](https://github.com/jwd83/svsim) or any SystemVerilog simulator.
 
 - **8-bit data path**, 16-bit instructions
 - **4 general-purpose registers**: R0, R1, R2, R3
