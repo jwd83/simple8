@@ -162,7 +162,7 @@
     <div class="cycle-counter">Cycle: <span id="cycle-num">0</span></div>
     <div class="speed-control">
       <label>Speed</label>
-      <input type="range" id="speed" min="1" max="10" value="5">
+      <input type="range" id="speed" min="1" max="20" value="5"> <span id="speed-label">5</span>
     </div>
   </div>
 
@@ -215,20 +215,29 @@ function createCPU() {
 }
 
 function loadProgram(cpu) {
-  // Fibonacci: R0=prev, R1=curr. Halts when R1 reaches 233.
-  // Final value copied to R3, stored to mem[0x82].
+  // Phase 1: Fibonacci (R0=prev, R1=curr), halts at 233
+  // Phase 2: Copy 233 to R3, store to 0xE2
+  // Phase 3: Sum mem[0x00..0x7F] → 16-bit result at 0xE4:0xE5
+  // Phase 4: XOR code bytes 0x00–0x0B with 0xAA → store to 0xA0–0xAB
+  //
+  // Data lives at 0xE0+ to keep code area clear through ~0x83.
+  //   0xE0 = current fib, 0xE1 = prev fib, 0xE2 = final fib (233)
+  //   0xE4 = sum high byte, 0xE5 = sum low byte
+  //   0xA0–0xAB = XOR output
+  //
   const prog = [
+    // ── Phase 1: Fibonacci ───────────────────────────────────────
     [0x00, 0x60, 0x00], // LDI R0, 0       ; a = 0 (prev)
     [0x02, 0x64, 0x01], // LDI R1, 1       ; b = 1 (curr)
     // loop:
-    [0x04, 0x84, 0x80], // ST [0x80], R1   ; store current fib
-    [0x06, 0x80, 0x81], // ST [0x81], R0   ; store prev fib
+    [0x04, 0x84, 0xE0], // ST [0xE0], R1   ; store current fib
+    [0x06, 0x80, 0xE1], // ST [0xE1], R0   ; store prev fib
     // check if R1 == 233
     [0x08, 0x6C, 0xE9], // LDI R3, 233     ; R3 = 233
     [0x0A, 0x5A, 0x00], // XOR R2, R2      ; R2 = 0
     [0x0C, 0x19, 0x00], // ADD R2, R1      ; R2 = copy of R1
     [0x0E, 0x2B, 0x00], // SUB R2, R3      ; R2 = R1 - 233
-    [0x10, 0xA0, 0x1E], // JZ 0x1E         ; if R1 was 233, halt
+    [0x10, 0xA0, 0x1E], // JZ 0x1E         ; if R1 was 233 → phase 2
     // compute next fib
     [0x12, 0x5A, 0x00], // XOR R2, R2      ; R2 = 0
     [0x14, 0x19, 0x00], // ADD R2, R1      ; R2 = b (save copy)
@@ -236,11 +245,93 @@ function loadProgram(cpu) {
     [0x18, 0x50, 0x00], // XOR R0, R0      ; R0 = 0
     [0x1A, 0x12, 0x00], // ADD R0, R2      ; R0 = saved b (new prev)
     [0x1C, 0x90, 0x04], // JMP 0x04        ; loop
-    // halt: copy R1 to R3, store, and stop
+
+    // ── Phase 2: save final fib, start sum ───────────────────────
     [0x1E, 0x5F, 0x00], // XOR R3, R3      ; R3 = 0
     [0x20, 0x1D, 0x00], // ADD R3, R1      ; R3 = 233
-    [0x22, 0x8C, 0x82], // ST [0x82], R3   ; store final value
-    [0x24, 0x90, 0x24], // JMP 0x24        ; halt (self-loop)
+    [0x22, 0x8C, 0xE2], // ST [0xE2], R3   ; store final fib
+    [0x24, 0x90, 0x26], // JMP 0x26        ; → phase 3
+
+    // ── Phase 3: sum mem[0x00..0x7F] → 16-bit result ────────────
+    // Self-modifying LD at 0x2E; addr byte at 0x2F.
+    // Carry: add R2 to R0 by repeated R0++; wrap to 0 means carry.
+    // R0 = sum_lo, R1 = sum_hi, R2 = byte, R3 = temp
+
+    // init
+    [0x26, 0x60, 0x00], // LDI R0, 0       ; sum_lo = 0
+    [0x28, 0x64, 0x00], // LDI R1, 0       ; sum_hi = 0
+    [0x2A, 0x68, 0x00], // LDI R2, 0       ; starting address
+    [0x2C, 0x88, 0x2F], // ST [0x2F], R2   ; init self-mod LD addr byte
+
+    // outer_loop (0x2E):
+    [0x2E, 0x78, 0x00], // LD R2, [0x??]   ; ← addr at 0x2F is self-modified
+
+    // add_loop: add R2 to [R1:R0] by repeated R0++
+    [0x30, 0x5F, 0x00], // XOR R3, R3
+    [0x32, 0x1E, 0x00], // ADD R3, R2      ; Z if R2 == 0
+    [0x34, 0xA0, 0x46], // JZ 0x46         ; → done_add
+    [0x36, 0x6C, 0x01], // LDI R3, 1
+    [0x38, 0x13, 0x00], // ADD R0, R3      ; R0++ (Z if 255→0)
+    [0x3A, 0xA0, 0x40], // JZ 0x40         ; → carry
+    [0x3C, 0x2B, 0x00], // SUB R2, R3      ; R2--
+    [0x3E, 0x90, 0x30], // JMP 0x30        ; → add_loop
+
+    // carry
+    [0x40, 0x17, 0x00], // ADD R1, R3      ; R1++ (R3 still 1)
+    [0x42, 0x2B, 0x00], // SUB R2, R3      ; R2--
+    [0x44, 0x90, 0x30], // JMP 0x30        ; → add_loop
+
+    // done_add
+    [0x46, 0x78, 0x2F], // LD R2, [0x2F]   ; current address
+    [0x48, 0x6C, 0x01], // LDI R3, 1
+    [0x4A, 0x1B, 0x00], // ADD R2, R3      ; address++
+    [0x4C, 0x88, 0x2F], // ST [0x2F], R2   ; update
+    [0x4E, 0x6C, 0x80], // LDI R3, 0x80
+    [0x50, 0x2B, 0x00], // SUB R2, R3      ; Z if address == 0x80
+    [0x52, 0xA0, 0x56], // JZ 0x56         ; → sum_done
+    [0x54, 0x90, 0x2E], // JMP 0x2E        ; → outer_loop
+
+    // sum_done
+    [0x56, 0x84, 0xE4], // ST [0xE4], R1   ; sum high byte
+    [0x58, 0x80, 0xE5], // ST [0xE5], R0   ; sum low byte
+    [0x5A, 0x90, 0x5C], // JMP 0x5C        ; → phase 4
+
+    // ── Phase 4: XOR code bytes 0x00–0x0B → 0xA0–0xAB ───────────
+    // Self-modifying LD (source) at 0x66, addr byte at 0x67.
+    // Self-modifying ST (dest)   at 0x6A, addr byte at 0x6B.
+    // R0 = loaded/XOR'd byte, R1 = mask (0xAA), R2/R3 = temp
+
+    // init
+    [0x5C, 0x64, 0xAA], // LDI R1, 0xAA    ; XOR mask = 10101010
+    [0x5E, 0x60, 0x00], // LDI R0, 0x00    ; source start addr
+    [0x60, 0x80, 0x67], // ST [0x67], R0    ; init LD source addr byte
+    [0x62, 0x60, 0xA0], // LDI R0, 0xA0    ; dest start addr
+    [0x64, 0x80, 0x6B], // ST [0x6B], R0    ; init ST dest addr byte
+
+    // xor_loop (0x66):
+    [0x66, 0x70, 0x00], // LD R0, [0x??]    ; ← source addr at 0x67
+    [0x68, 0x51, 0x00], // XOR R0, R1       ; R0 ^= 0xAA
+    [0x6A, 0x80, 0xA0], // ST [0x??], R0    ; ← dest addr at 0x6B
+
+    // increment source
+    [0x6C, 0x78, 0x67], // LD R2, [0x67]    ; source addr
+    [0x6E, 0x6C, 0x01], // LDI R3, 1
+    [0x70, 0x1B, 0x00], // ADD R2, R3       ; source++
+    [0x72, 0x88, 0x67], // ST [0x67], R2    ; update
+
+    // increment dest
+    [0x74, 0x78, 0x6B], // LD R2, [0x6B]    ; dest addr
+    [0x76, 0x1B, 0x00], // ADD R2, R3       ; dest++ (R3 still 1)
+    [0x78, 0x88, 0x6B], // ST [0x6B], R2    ; update
+
+    // check done: dest == 0xAC means 12 bytes done
+    [0x7A, 0x6C, 0xAC], // LDI R3, 0xAC
+    [0x7C, 0x2B, 0x00], // SUB R2, R3       ; Z if dest == 0xAC
+    [0x7E, 0xA0, 0x82], // JZ 0x82          ; → halt
+    [0x80, 0x90, 0x66], // JMP 0x66         ; → xor_loop
+
+    // halt
+    [0x82, 0x90, 0x82], // JMP 0x82         ; halt (self-loop)
   ];
   for (const [addr, hi, lo] of prog) {
     cpu.mem[addr] = hi;
@@ -428,6 +519,7 @@ function stepCPU(cpu) {
 
   cpu.cycle++;
   cpu.log.push({ cycle: cpu.cycle, state: STATES[state], lines: logEntry });
+  if (cpu.log.length > 200) cpu.log.splice(0, cpu.log.length - 100);
 }
 
 // ── UI Rendering ───────────────────────────────────────────────────
@@ -592,10 +684,15 @@ document.getElementById('btn-reset').addEventListener('click', () => {
   renderAll();
 });
 
+document.getElementById('speed').addEventListener('input', (e) => {
+  document.getElementById('speed-label').textContent = e.target.value;
+});
+
 function getDelay() {
   const speed = parseInt(document.getElementById('speed').value);
-  // speed 1 = 1000ms, speed 10 = 50ms
-  return Math.round(1050 - speed * 100);
+  // 1=1000ms, 5=200ms, 10=50ms, 14+=batch
+  if (speed <= 10) return Math.round(1100 - speed * 100);
+  return 50; // won't be used in batch mode
 }
 
 function startRun() {
@@ -612,19 +709,39 @@ function stopRun() {
   if (runTimer) { clearTimeout(runTimer); runTimer = null; }
 }
 
-function tick() {
-  if (!running) return;
-  stepCPU(cpu);
-  renderAll();
-  // Detect infinite loop (JMP to self — target equals JMP's own address)
+function checkHalt() {
+  // Detect JMP-to-self (target equals JMP's own address)
   if (cpu.prevState && cpu.prevState.state === 2 && cpu.state === 0) {
     const { opcode } = decode(cpu.instr_hi, cpu.instr_lo);
-    if (opcode === 0x9 && cpu.pc === cpu.prevState.pc) {
-      stopRun();
-      return;
-    }
+    if (opcode === 0x9 && cpu.pc === cpu.prevState.pc) return true;
   }
-  runTimer = setTimeout(tick, getDelay());
+  return false;
+}
+
+function tick() {
+  if (!running) return;
+  const speed = parseInt(document.getElementById('speed').value);
+
+  if (speed <= 13) {
+    // Single-step with render: speed 1–13 controls delay
+    // 1=1000ms 5=200ms 10=50ms 11=30ms 12=16ms 13=8ms
+    stepCPU(cpu);
+    renderAll();
+    if (checkHalt()) { stopRun(); return; }
+    const delay = speed <= 10 ? getDelay() : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 16, 8][speed];
+    runTimer = setTimeout(tick, delay);
+  } else {
+    // Batch mode: speed 14–20, render every frame
+    //  14=10/frame  15=50  16=200  17=1000  18=5000  19=20000  20=100000
+    const batches = [0,0,0,0,0,0,0,0,0,0,0,0,0,0, 10, 50, 200, 1000, 5000, 20000, 100000];
+    const batchSize = batches[speed];
+    for (let i = 0; i < batchSize; i++) {
+      stepCPU(cpu);
+      if (checkHalt()) { renderAll(); stopRun(); return; }
+    }
+    renderAll();
+    runTimer = setTimeout(tick, 16);
+  }
 }
 
 document.getElementById('btn-run').addEventListener('click', startRun);
