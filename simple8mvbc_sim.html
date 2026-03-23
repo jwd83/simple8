@@ -1,0 +1,774 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Simple8MVBC — CPU Simulator (with Carry)</title>
+<style>
+  :root {
+    --bg: #1a1a2e;
+    --panel: #16213e;
+    --border: #0f3460;
+    --accent: #e94560;
+    --text: #eee;
+    --dim: #888;
+    --hi: #53d8fb;
+    --green: #4ec879;
+    --yellow: #f0c040;
+    --orange: #e8833a;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Consolas', monospace;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    padding: 16px;
+  }
+  h1 { font-size: 1.3rem; color: var(--hi); margin-bottom: 12px; }
+  h2 { font-size: 0.85rem; color: var(--accent); margin-bottom: 6px; text-transform: uppercase; letter-spacing: 1px; }
+
+  .layout {
+    display: grid;
+    grid-template-columns: 340px 1fr 280px;
+    grid-template-rows: auto 1fr;
+    gap: 12px;
+    max-width: 1280px;
+    margin: 0 auto;
+  }
+
+  .controls {
+    grid-column: 1 / -1;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  button {
+    font-family: inherit;
+    font-size: 0.85rem;
+    padding: 8px 18px;
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    background: var(--panel);
+    color: var(--text);
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover { background: var(--border); }
+  button.primary { background: var(--accent); border-color: var(--accent); font-weight: bold; }
+  button.primary:hover { background: #c73a50; }
+
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 12px;
+  }
+
+  /* --- Program listing --- */
+  .program { overflow-y: auto; max-height: 70vh; }
+  .program table { width: 100%; border-collapse: collapse; font-size: 0.78rem; }
+  .program td { padding: 3px 6px; white-space: nowrap; }
+  .program tr.current { background: rgba(233,69,96,0.25); }
+  .program tr.current td:first-child { color: var(--accent); font-weight: bold; }
+  .program .bp { width: 16px; cursor: pointer; text-align: center; user-select: none; }
+  .program .bp .dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; border: 1px solid transparent; }
+  .program .bp .dot:hover { border-color: #e94560; }
+  .program .bp .dot.active { background: #e94560; border-color: #c73a50; box-shadow: 0 0 4px #e94560; }
+  .program .addr { color: var(--dim); }
+  .program .hex { color: var(--yellow); }
+  .program .asm { color: var(--text); }
+  .program tr.bp-hit { background: rgba(233,69,96,0.45); }
+
+  /* --- State panel --- */
+  .state-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 8px;
+  }
+  .state-item {
+    background: rgba(0,0,0,0.25);
+    border-radius: 4px;
+    padding: 8px;
+    text-align: center;
+  }
+  .state-item .label { font-size: 0.7rem; color: var(--dim); margin-bottom: 2px; }
+  .state-item .value { font-size: 1.3rem; color: var(--hi); font-weight: bold; }
+  .state-item.changed .value { color: var(--yellow); }
+  .state-item.wide { grid-column: 1 / -1; }
+
+  /* --- Memory view --- */
+  .memview { overflow-y: auto; max-height: 70vh; }
+  .memview table { width: 100%; border-collapse: collapse; font-size: 0.72rem; }
+  .memview td, .memview th { padding: 2px 4px; text-align: center; }
+  .memview th { color: var(--dim); font-weight: normal; }
+  .memview .mem-cell { color: var(--dim); min-width: 22px; }
+  .memview .mem-cell.nonzero { color: var(--text); }
+  .memview .mem-cell.highlight { background: rgba(83,216,251,0.2); color: var(--hi); font-weight: bold; }
+  .memview .mem-cell.write-hi { background: rgba(233,69,96,0.3); color: var(--accent); }
+  .memview .row-addr { color: var(--yellow); text-align: left; }
+
+  /* --- Pipeline / FSM --- */
+  .pipeline {
+    display: flex;
+    gap: 6px;
+    margin: 10px 0;
+    flex-wrap: wrap;
+  }
+  .pipe-stage {
+    padding: 6px 12px;
+    border-radius: 4px;
+    font-size: 0.75rem;
+    background: rgba(0,0,0,0.3);
+    color: var(--dim);
+    border: 1px solid transparent;
+  }
+  .pipe-stage.active {
+    color: var(--green);
+    border-color: var(--green);
+    background: rgba(78,200,121,0.15);
+    font-weight: bold;
+  }
+
+  /* --- Log --- */
+  .log {
+    grid-column: 1 / -1;
+    max-height: 120px;
+    overflow-y: auto;
+    font-size: 0.72rem;
+    color: var(--dim);
+    line-height: 1.5;
+  }
+  .log .cycle-marker { color: var(--accent); }
+  .log .action { color: var(--green); }
+
+  .speed-control { display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .speed-control label { font-size: 0.75rem; color: var(--dim); }
+  .speed-control input[type=range] { width: 80px; }
+
+  .cycle-counter { font-size: 0.85rem; color: var(--dim); }
+  .cycle-counter span { color: var(--yellow); font-weight: bold; }
+</style>
+</head>
+<body>
+
+<h1>Simple8MVBC — Multicycle CPU Simulator <span style="color:var(--orange)">(with Carry Flag)</span></h1>
+
+<div class="layout">
+  <!-- Controls -->
+  <div class="controls">
+    <button class="primary" id="btn-step" title="Step one clock cycle">Step</button>
+    <button id="btn-run" title="Auto-run">Run</button>
+    <button id="btn-pause" title="Pause auto-run" style="display:none">Pause</button>
+    <button id="btn-step-instr" title="Step one full instruction">Step Instruction</button>
+    <button id="btn-reset" title="Reset CPU">Reset</button>
+    <div class="cycle-counter">Cycle: <span id="cycle-num">0</span></div>
+    <div class="speed-control">
+      <label>Speed</label>
+      <input type="range" id="speed" min="1" max="20" value="5"> <span id="speed-label">5</span>
+    </div>
+  </div>
+
+  <!-- Program listing -->
+  <div class="panel program" id="program-panel">
+    <h2>Program</h2>
+    <table><tbody id="program-body"></tbody></table>
+  </div>
+
+  <!-- Center: State -->
+  <div class="panel">
+    <h2>CPU State</h2>
+    <div class="pipeline" id="pipeline"></div>
+    <div class="state-grid" id="state-grid"></div>
+    <h2 style="margin-top:14px">Decoded Instruction</h2>
+    <div id="decoded" style="font-size:0.85rem; margin-top:6px; color:var(--green); min-height:1.5em;"></div>
+    <h2 style="margin-top:14px">Activity Log</h2>
+    <div class="log" id="log"></div>
+  </div>
+
+  <!-- Memory -->
+  <div class="panel memview" id="mem-panel">
+    <h2>Memory (256 bytes)</h2>
+    <table><thead id="mem-head"></thead><tbody id="mem-body"></tbody></table>
+  </div>
+</div>
+
+<script>
+// ── CPU Simulation ─────────────────────────────────────────────────
+
+const OPNAMES = ['NOP','ADD','SUB','AND','OR','XOR','LDI','LD','ST','JMP','JZ','JC'];
+const STATES = ['FETCH_HI','FETCH_LO','EXECUTE','MEM_READ','WRITEBACK'];
+
+function createCPU() {
+  return {
+    pc: 0,
+    reg: [0, 0, 0, 0],
+    z: 0,
+    c: 0,            // ← carry flag
+    mem: new Uint8Array(256),
+    state: 0,
+    instr_hi: 0,
+    instr_lo: 0,
+    mem_read: 0,
+    cycle: 0,
+    log: [],
+    prevState: null,
+    memAccess: null,
+  };
+}
+
+function loadProgram(cpu) {
+  // Phase 1: Fibonacci (R0=prev, R1=curr), halts at 233
+  // Phase 2: Copy 233 to R3, store to 0xE2
+  // Phase 3: Sum mem[0x00..0x7F] → 16-bit at 0xE4:0xE5
+  //          *** OPTIMIZED: uses ADD + JC instead of increment loop ***
+  // Phase 4: XOR code bytes 0x00–0x0B → 0xA0–0xAB
+  //
+  // Data: 0xE0=curr fib, 0xE1=prev fib, 0xE2=final fib
+  //       0xE4=sum hi, 0xE5=sum lo, 0xA0–0xAB=XOR output
+  //
+  const prog = [
+    // ── Phase 1: Fibonacci ───────────────────────────────────────
+    [0x00, 0x60, 0x00], // LDI R0, 0       ; a = 0 (prev)
+    [0x02, 0x64, 0x01], // LDI R1, 1       ; b = 1 (curr)
+    // loop:
+    [0x04, 0x84, 0xE0], // ST [0xE0], R1   ; store current fib
+    [0x06, 0x80, 0xE1], // ST [0xE1], R0   ; store prev fib
+    // check if R1 == 233
+    [0x08, 0x6C, 0xE9], // LDI R3, 233
+    [0x0A, 0x5A, 0x00], // XOR R2, R2      ; R2 = 0
+    [0x0C, 0x19, 0x00], // ADD R2, R1      ; R2 = R1
+    [0x0E, 0x2B, 0x00], // SUB R2, R3      ; Z if R1 == 233
+    [0x10, 0xA0, 0x1E], // JZ 0x1E         ; → phase 2
+    // compute next fib
+    [0x12, 0x5A, 0x00], // XOR R2, R2
+    [0x14, 0x19, 0x00], // ADD R2, R1      ; R2 = b (save)
+    [0x16, 0x14, 0x00], // ADD R1, R0      ; R1 = a+b
+    [0x18, 0x50, 0x00], // XOR R0, R0
+    [0x1A, 0x12, 0x00], // ADD R0, R2      ; R0 = old b
+    [0x1C, 0x90, 0x04], // JMP 0x04
+
+    // ── Phase 2: save final fib ──────────────────────────────────
+    [0x1E, 0x5F, 0x00], // XOR R3, R3
+    [0x20, 0x1D, 0x00], // ADD R3, R1      ; R3 = 233
+    [0x22, 0x8C, 0xE2], // ST [0xE2], R3   ; store final fib
+    [0x24, 0x90, 0x26], // JMP 0x26        ; → phase 3
+
+    // ── Phase 3: sum mem[0x00..0x7F] — O(1) per byte with carry! ─
+    // R0 = sum_lo, R1 = sum_hi, R2 = byte, R3 = temp
+    // Self-modifying LD at 0x2E, addr byte at 0x2F.
+
+    // init
+    [0x26, 0x60, 0x00], // LDI R0, 0       ; sum_lo
+    [0x28, 0x64, 0x00], // LDI R1, 0       ; sum_hi
+    [0x2A, 0x68, 0x00], // LDI R2, 0
+    [0x2C, 0x88, 0x2F], // ST [0x2F], R2   ; init self-mod LD addr
+
+    // outer_loop (0x2E):
+    [0x2E, 0x78, 0x00], // LD R2, [0x??]   ; ← self-mod addr at 0x2F
+
+    // *** THE KEY OPTIMIZATION: direct add + carry branch ***
+    [0x30, 0x12, 0x00], // ADD R0, R2      ; sum_lo += byte (C if overflow)
+    [0x32, 0xB0, 0x36], // JC 0x36         ; carry? → increment sum_hi
+    [0x34, 0x90, 0x3A], // JMP 0x3A        ; → done_add
+
+    // had_carry (0x36):
+    [0x36, 0x6C, 0x01], // LDI R3, 1
+    [0x38, 0x17, 0x00], // ADD R1, R3      ; sum_hi++
+
+    // done_add (0x3A): advance address
+    [0x3A, 0x78, 0x2F], // LD R2, [0x2F]   ; current addr
+    [0x3C, 0x6C, 0x01], // LDI R3, 1
+    [0x3E, 0x1B, 0x00], // ADD R2, R3      ; addr++
+    [0x40, 0x88, 0x2F], // ST [0x2F], R2   ; update
+    [0x42, 0x6C, 0x80], // LDI R3, 0x80
+    [0x44, 0x2B, 0x00], // SUB R2, R3      ; Z if addr == 0x80
+    [0x46, 0xA0, 0x4A], // JZ 0x4A         ; → sum_done
+    [0x48, 0x90, 0x2E], // JMP 0x2E        ; → outer_loop
+
+    // sum_done (0x4A):
+    [0x4A, 0x84, 0xE4], // ST [0xE4], R1   ; sum high byte
+    [0x4C, 0x80, 0xE5], // ST [0xE5], R0   ; sum low byte
+    [0x4E, 0x90, 0x50], // JMP 0x50        ; → phase 4
+
+    // ── Phase 4: XOR code bytes 0x00–0x0B → 0xA0–0xAB ───────────
+    // Self-mod LD at 0x5A (addr at 0x5B), ST at 0x5E (addr at 0x5F).
+    // R0 = byte, R1 = mask (0xAA), R2/R3 = temp
+
+    // init
+    [0x50, 0x64, 0xAA], // LDI R1, 0xAA    ; XOR mask
+    [0x52, 0x60, 0x00], // LDI R0, 0x00
+    [0x54, 0x80, 0x5B], // ST [0x5B], R0    ; init LD source addr
+    [0x56, 0x60, 0xA0], // LDI R0, 0xA0
+    [0x58, 0x80, 0x5F], // ST [0x5F], R0    ; init ST dest addr
+
+    // xor_loop (0x5A):
+    [0x5A, 0x70, 0x00], // LD R0, [0x??]    ; ← source at 0x5B
+    [0x5C, 0x51, 0x00], // XOR R0, R1       ; ^= 0xAA
+    [0x5E, 0x80, 0xA0], // ST [0x??], R0    ; ← dest at 0x5F
+
+    // update source
+    [0x60, 0x78, 0x5B], // LD R2, [0x5B]
+    [0x62, 0x6C, 0x01], // LDI R3, 1
+    [0x64, 0x1B, 0x00], // ADD R2, R3       ; source++
+    [0x66, 0x88, 0x5B], // ST [0x5B], R2
+
+    // update dest
+    [0x68, 0x78, 0x5F], // LD R2, [0x5F]
+    [0x6A, 0x1B, 0x00], // ADD R2, R3       ; dest++ (R3 still 1)
+    [0x6C, 0x88, 0x5F], // ST [0x5F], R2
+
+    // check done: dest == 0xAC
+    [0x6E, 0x6C, 0xAC], // LDI R3, 0xAC
+    [0x70, 0x2B, 0x00], // SUB R2, R3       ; Z if done
+    [0x72, 0xA0, 0x76], // JZ 0x76          ; → halt
+    [0x74, 0x90, 0x5A], // JMP 0x5A         ; → xor_loop
+
+    // halt
+    [0x76, 0x90, 0x76], // JMP 0x76         ; halt (self-loop)
+  ];
+  for (const [addr, hi, lo] of prog) {
+    cpu.mem[addr] = hi;
+    cpu.mem[addr + 1] = lo;
+  }
+}
+
+function decode(hi, lo) {
+  const opcode = (hi >> 4) & 0xF;
+  const rd = (hi >> 2) & 0x3;
+  const rs = hi & 0x3;
+  const imm8 = lo;
+  return { opcode, rd, rs, imm8 };
+}
+
+function disassemble(hi, lo) {
+  const { opcode, rd, rs, imm8 } = decode(hi, lo);
+  if (opcode > 0xB) return `??? (0x${opcode.toString(16).toUpperCase()})`;
+  const name = OPNAMES[opcode];
+  switch (opcode) {
+    case 0x0: return 'NOP';
+    case 0x1: case 0x2: case 0x3: case 0x4: case 0x5:
+      return `${name} R${rd}, R${rs}`;
+    case 0x6: return `LDI R${rd}, ${imm8}`;
+    case 0x7: return `LD R${rd}, [0x${imm8.toString(16).toUpperCase().padStart(2,'0')}]`;
+    case 0x8: return `ST [0x${imm8.toString(16).toUpperCase().padStart(2,'0')}], R${rd}`;
+    case 0x9: return `JMP 0x${imm8.toString(16).toUpperCase().padStart(2,'0')}`;
+    case 0xA: return `JZ 0x${imm8.toString(16).toUpperCase().padStart(2,'0')}`;
+    case 0xB: return `JC 0x${imm8.toString(16).toUpperCase().padStart(2,'0')}`;
+  }
+}
+
+function hex2(v) { return v.toString(16).toUpperCase().padStart(2, '0'); }
+
+function saveSnapshot(cpu) {
+  cpu.prevState = {
+    pc: cpu.pc,
+    reg: [...cpu.reg],
+    z: cpu.z,
+    c: cpu.c,
+    state: cpu.state,
+    instr_hi: cpu.instr_hi,
+    instr_lo: cpu.instr_lo,
+  };
+}
+
+function stepCPU(cpu) {
+  saveSnapshot(cpu);
+  cpu.memAccess = null;
+  const logEntry = [];
+
+  const state = cpu.state;
+
+  switch (state) {
+    case 0: { // FETCH_HI
+      cpu.instr_hi = cpu.mem[cpu.pc];
+      cpu.state = 1;
+      cpu.memAccess = { addr: cpu.pc, type: 'read' };
+      logEntry.push(`Read mem[0x${hex2(cpu.pc)}] → 0x${hex2(cpu.instr_hi)} (instr high byte)`);
+      break;
+    }
+    case 1: { // FETCH_LO
+      cpu.instr_lo = cpu.mem[cpu.pc + 1];
+      cpu.state = 2;
+      cpu.memAccess = { addr: cpu.pc + 1, type: 'read' };
+      logEntry.push(`Read mem[0x${hex2(cpu.pc+1)}] → 0x${hex2(cpu.instr_lo)} (instr low byte)`);
+      const d = disassemble(cpu.instr_hi, cpu.instr_lo);
+      logEntry.push(`Decoded: ${d}`);
+      break;
+    }
+    case 2: { // EXECUTE
+      const { opcode, rd, rs, imm8 } = decode(cpu.instr_hi, cpu.instr_lo);
+      switch (opcode) {
+        case 0x0: // NOP
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          logEntry.push('NOP — advance PC');
+          break;
+        case 0x1: { // ADD — sets Z and C
+          const full = cpu.reg[rd] + cpu.reg[rs];
+          const result = full & 0xFF;
+          const carry = full > 255 ? 1 : 0;
+          logEntry.push(`ADD R${rd}(${cpu.reg[rd]}) + R${rs}(${cpu.reg[rs]}) = ${result}${carry ? ' C=1' : ''}`);
+          cpu.reg[rd] = result;
+          cpu.z = result === 0 ? 1 : 0;
+          cpu.c = carry;
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x2: { // SUB — sets Z and C (borrow)
+          const borrow = cpu.reg[rd] < cpu.reg[rs] ? 1 : 0;
+          const result = (cpu.reg[rd] - cpu.reg[rs]) & 0xFF;
+          logEntry.push(`SUB R${rd}(${cpu.reg[rd]}) - R${rs}(${cpu.reg[rs]}) = ${result}${borrow ? ' C=1(borrow)' : ''}`);
+          cpu.reg[rd] = result;
+          cpu.z = result === 0 ? 1 : 0;
+          cpu.c = borrow;
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x3: { // AND
+          const result = cpu.reg[rd] & cpu.reg[rs];
+          logEntry.push(`AND R${rd} & R${rs} = ${result}`);
+          cpu.reg[rd] = result;
+          cpu.z = result === 0 ? 1 : 0;
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x4: { // OR
+          const result = cpu.reg[rd] | cpu.reg[rs];
+          logEntry.push(`OR R${rd} | R${rs} = ${result}`);
+          cpu.reg[rd] = result;
+          cpu.z = result === 0 ? 1 : 0;
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x5: { // XOR
+          const result = cpu.reg[rd] ^ cpu.reg[rs];
+          logEntry.push(`XOR R${rd} ^ R${rs} = ${result}`);
+          cpu.reg[rd] = result;
+          cpu.z = result === 0 ? 1 : 0;
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x6: { // LDI
+          logEntry.push(`LDI R${rd} ← ${imm8}`);
+          cpu.reg[rd] = imm8;
+          cpu.z = imm8 === 0 ? 1 : 0;
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x7: { // LD
+          logEntry.push(`LD R${rd} ← mem[0x${hex2(imm8)}] — issuing read`);
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 3;
+          break;
+        }
+        case 0x8: { // ST
+          logEntry.push(`ST mem[0x${hex2(imm8)}] ← R${rd}(${cpu.reg[rd]})`);
+          cpu.mem[imm8] = cpu.reg[rd];
+          cpu.memAccess = { addr: imm8, type: 'write' };
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+          break;
+        }
+        case 0x9: { // JMP
+          logEntry.push(`JMP → 0x${hex2(imm8)}`);
+          cpu.pc = imm8;
+          cpu.state = 0;
+          break;
+        }
+        case 0xA: { // JZ
+          if (cpu.z) {
+            logEntry.push(`JZ taken (Z=1) → 0x${hex2(imm8)}`);
+            cpu.pc = imm8;
+          } else {
+            logEntry.push(`JZ not taken (Z=0), advance PC`);
+            cpu.pc = (cpu.pc + 2) & 0xFF;
+          }
+          cpu.state = 0;
+          break;
+        }
+        case 0xB: { // JC
+          if (cpu.c) {
+            logEntry.push(`JC taken (C=1) → 0x${hex2(imm8)}`);
+            cpu.pc = imm8;
+          } else {
+            logEntry.push(`JC not taken (C=0), advance PC`);
+            cpu.pc = (cpu.pc + 2) & 0xFF;
+          }
+          cpu.state = 0;
+          break;
+        }
+        default:
+          logEntry.push(`Unknown opcode 0x${opcode.toString(16)} — treated as NOP`);
+          cpu.pc = (cpu.pc + 2) & 0xFF;
+          cpu.state = 0;
+      }
+      break;
+    }
+    case 3: { // MEM_READ
+      const { imm8, rd } = decode(cpu.instr_hi, cpu.instr_lo);
+      cpu.mem_read = cpu.mem[imm8];
+      cpu.memAccess = { addr: imm8, type: 'read' };
+      logEntry.push(`MEM_READ: mem[0x${hex2(imm8)}] → ${cpu.mem_read}`);
+      cpu.state = 4;
+      break;
+    }
+    case 4: { // WRITEBACK
+      const { rd } = decode(cpu.instr_hi, cpu.instr_lo);
+      logEntry.push(`WRITEBACK: R${rd} ← ${cpu.mem_read}`);
+      cpu.reg[rd] = cpu.mem_read;
+      cpu.z = cpu.mem_read === 0 ? 1 : 0;
+      cpu.state = 0;
+      break;
+    }
+  }
+
+  cpu.cycle++;
+  cpu.log.push({ cycle: cpu.cycle, state: STATES[state], lines: logEntry });
+  if (cpu.log.length > 200) cpu.log.splice(0, cpu.log.length - 100);
+}
+
+// ── UI Rendering ───────────────────────────────────────────────────
+
+let cpu = createCPU();
+loadProgram(cpu);
+const breakpoints = new Set();
+
+function getInstructions(cpu) {
+  const instrs = [];
+  const shown = new Set();
+  for (let a = 0; a < 256; a += 2) {
+    if (cpu.mem[a] !== 0 || cpu.mem[a+1] !== 0) shown.add(a);
+  }
+  shown.add(cpu.pc & 0xFE);
+  for (const addr of [...shown].sort((a,b) => a - b)) {
+    const hi = cpu.mem[addr];
+    const lo = cpu.mem[addr + 1];
+    instrs.push({ addr, hi, lo, asm: disassemble(hi, lo) });
+  }
+  return instrs;
+}
+
+function renderProgram() {
+  const body = document.getElementById('program-body');
+  const instrs = getInstructions(cpu);
+  const pcAligned = cpu.pc & 0xFE;
+  body.innerHTML = instrs.map(i => {
+    const isCur = i.addr === pcAligned;
+    const isBp = breakpoints.has(i.addr);
+    let cls = '';
+    if (isCur && isBp) cls = ' class="bp-hit"';
+    else if (isCur) cls = ' class="current"';
+    const arrow = isCur ? '►' : ' ';
+    const dotCls = isBp ? 'dot active' : 'dot';
+    return `<tr${cls}>
+      <td class="bp"><span class="${dotCls}" data-addr="${i.addr}"></span></td>
+      <td class="addr">${arrow} 0x${hex2(i.addr)}</td>
+      <td class="hex">${hex2(i.hi)} ${hex2(i.lo)}</td>
+      <td class="asm">${i.asm}</td>
+    </tr>`;
+  }).join('');
+
+  body.querySelectorAll('.dot').forEach(dot => {
+    dot.addEventListener('click', () => {
+      const addr = parseInt(dot.dataset.addr);
+      if (breakpoints.has(addr)) breakpoints.delete(addr);
+      else breakpoints.add(addr);
+      renderProgram();
+    });
+  });
+
+  const cur = body.querySelector('.current, .bp-hit');
+  if (cur) cur.scrollIntoView({ block: 'nearest' });
+}
+
+function renderState() {
+  const prev = cpu.prevState || {};
+  const items = [
+    { label: 'PC', value: `0x${hex2(cpu.pc)}`, changed: prev.pc !== undefined && prev.pc !== cpu.pc },
+    { label: 'State', value: STATES[cpu.state], changed: prev.state !== undefined && prev.state !== cpu.state },
+    { label: 'R0', value: cpu.reg[0], changed: prev.reg && prev.reg[0] !== cpu.reg[0] },
+    { label: 'R1', value: cpu.reg[1], changed: prev.reg && prev.reg[1] !== cpu.reg[1] },
+    { label: 'R2', value: cpu.reg[2], changed: prev.reg && prev.reg[2] !== cpu.reg[2] },
+    { label: 'R3', value: cpu.reg[3], changed: prev.reg && prev.reg[3] !== cpu.reg[3] },
+    { label: 'Z Flag', value: cpu.z, changed: prev.z !== undefined && prev.z !== cpu.z },
+    { label: 'C Flag', value: cpu.c, changed: prev.c !== undefined && prev.c !== cpu.c },
+    { label: 'Instr', value: `${hex2(cpu.instr_hi)} ${hex2(cpu.instr_lo)}`, changed: prev.instr_hi !== undefined && (prev.instr_hi !== cpu.instr_hi || prev.instr_lo !== cpu.instr_lo) },
+  ];
+
+  const grid = document.getElementById('state-grid');
+  grid.innerHTML = items.map(i =>
+    `<div class="state-item${i.changed ? ' changed' : ''}">
+      <div class="label">${i.label}</div>
+      <div class="value">${i.value}</div>
+    </div>`
+  ).join('');
+
+  const pipeline = document.getElementById('pipeline');
+  pipeline.innerHTML = STATES.map((s, idx) =>
+    `<div class="pipe-stage${idx === cpu.state ? ' active' : ''}">${s}</div>`
+  ).join('');
+
+  const decoded = document.getElementById('decoded');
+  if (cpu.instr_hi !== 0 || cpu.instr_lo !== 0) {
+    decoded.textContent = disassemble(cpu.instr_hi, cpu.instr_lo);
+  } else {
+    decoded.textContent = 'NOP';
+  }
+
+  document.getElementById('cycle-num').textContent = cpu.cycle;
+}
+
+function renderMemory() {
+  const head = document.getElementById('mem-head');
+  const body = document.getElementById('mem-body');
+
+  head.innerHTML = '<tr><th></th>' + Array.from({length:16}, (_,i) => `<th>x${i.toString(16).toUpperCase()}</th>`).join('') + '</tr>';
+
+  const accessAddr = cpu.memAccess ? cpu.memAccess.addr : -1;
+  const accessType = cpu.memAccess ? cpu.memAccess.type : '';
+
+  let html = '';
+  for (let row = 0; row < 16; row++) {
+    const baseAddr = row * 16;
+    html += `<tr><td class="row-addr">${hex2(baseAddr)}</td>`;
+    for (let col = 0; col < 16; col++) {
+      const addr = baseAddr + col;
+      const val = cpu.mem[addr];
+      let cls = 'mem-cell';
+      if (val !== 0) cls += ' nonzero';
+      if (addr === accessAddr) {
+        cls += accessType === 'write' ? ' write-hi' : ' highlight';
+      }
+      html += `<td class="${cls}">${hex2(val)}</td>`;
+    }
+    html += '</tr>';
+  }
+  body.innerHTML = html;
+}
+
+function renderLog() {
+  const el = document.getElementById('log');
+  const recent = cpu.log.slice(-30);
+  el.innerHTML = recent.map(e =>
+    `<div><span class="cycle-marker">C${e.cycle} [${e.state}]</span> ${e.lines.map(l => `<span class="action">${l}</span>`).join(' | ')}</div>`
+  ).join('');
+  el.scrollTop = el.scrollHeight;
+}
+
+function renderAll() {
+  renderProgram();
+  renderState();
+  renderMemory();
+  renderLog();
+}
+
+renderAll();
+
+// ── Controls ───────────────────────────────────────────────────────
+
+let running = false;
+let runTimer = null;
+
+document.getElementById('btn-step').addEventListener('click', () => {
+  stepCPU(cpu);
+  renderAll();
+});
+
+document.getElementById('btn-step-instr').addEventListener('click', () => {
+  const maxSteps = 10;
+  for (let i = 0; i < maxSteps; i++) {
+    stepCPU(cpu);
+    if (cpu.state === 0) break;
+  }
+  renderAll();
+});
+
+document.getElementById('btn-reset').addEventListener('click', () => {
+  stopRun();
+  cpu = createCPU();
+  loadProgram(cpu);
+  renderAll();
+});
+
+document.getElementById('speed').addEventListener('input', (e) => {
+  document.getElementById('speed-label').textContent = e.target.value;
+});
+
+function getDelay() {
+  const speed = parseInt(document.getElementById('speed').value);
+  if (speed <= 10) return Math.round(1100 - speed * 100);
+  return 50;
+}
+
+function startRun() {
+  running = true;
+  document.getElementById('btn-run').style.display = 'none';
+  document.getElementById('btn-pause').style.display = '';
+  tick();
+}
+
+function stopRun() {
+  running = false;
+  document.getElementById('btn-run').style.display = '';
+  document.getElementById('btn-pause').style.display = 'none';
+  if (runTimer) { clearTimeout(runTimer); runTimer = null; }
+}
+
+function checkHalt() {
+  if (cpu.prevState && cpu.prevState.state === 2 && cpu.state === 0) {
+    const { opcode } = decode(cpu.instr_hi, cpu.instr_lo);
+    if (opcode === 0x9 && cpu.pc === cpu.prevState.pc) return true;
+  }
+  return false;
+}
+
+function checkBreakpoint() {
+  if (cpu.state === 0 && breakpoints.has(cpu.pc & 0xFE)) return true;
+  return false;
+}
+
+function tick() {
+  if (!running) return;
+  const speed = parseInt(document.getElementById('speed').value);
+
+  if (speed <= 13) {
+    stepCPU(cpu);
+    renderAll();
+    if (checkHalt()) { stopRun(); return; }
+    if (checkBreakpoint()) { stopRun(); return; }
+    const delay = speed <= 10 ? getDelay() : [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 30, 16, 8][speed];
+    runTimer = setTimeout(tick, delay);
+  } else {
+    const batches = [0,0,0,0,0,0,0,0,0,0,0,0,0,0, 10, 50, 200, 1000, 5000, 20000, 100000];
+    const batchSize = batches[speed];
+    for (let i = 0; i < batchSize; i++) {
+      stepCPU(cpu);
+      if (checkHalt()) { renderAll(); stopRun(); return; }
+      if (checkBreakpoint()) { renderAll(); stopRun(); return; }
+    }
+    renderAll();
+    runTimer = setTimeout(tick, 16);
+  }
+}
+
+document.getElementById('btn-run').addEventListener('click', startRun);
+document.getElementById('btn-pause').addEventListener('click', stopRun);
+
+// Keyboard shortcuts
+document.addEventListener('keydown', (e) => {
+  if (e.key === ' ' || e.key === 'n') { e.preventDefault(); stepCPU(cpu); renderAll(); }
+  if (e.key === 'i') { e.preventDefault(); document.getElementById('btn-step-instr').click(); }
+  if (e.key === 'r') { e.preventDefault(); if (running) stopRun(); else startRun(); }
+});
+</script>
+</body>
+</html>

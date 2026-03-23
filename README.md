@@ -12,6 +12,7 @@ The designs are organized as follows with increasing complexity:
 * Section II: von Neumann
   * simple8mv.sv - A simple 8 bit multi-cycle CPU, unified program and data memory (von Neumann architecture)
   * simple8mvb.sv - A simple 8 bit multi-cycle CPU, unified byte adressable program and data memory (von Neumann architecture)
+  * simple8mvbtn20k.sv - A Tang Nano 20K oriented 8 bit multi-cycle CPU with 64KiB unified byte-addressable memory, a 16 bit PC/address bus, and 32 bit instructions
 
 
 ## simple8.sv Overview
@@ -80,6 +81,31 @@ simple8_cpu cpu (
     .reset(reset)
 );
 ```
+
+## simple8mvbtn20k.sv Overview
+
+`simple8mvbtn20k.sv` keeps the Simple8 8-bit register file and ALU behavior, but stretches the byte-addressable von Neumann design to something that maps naturally onto a Tang Nano 20K.
+
+- **8-bit data path**, **32-bit instructions**
+- **16-bit PC** and **16-bit memory address field**
+- **64 KiB of unified byte-addressable memory**
+- **4-byte instruction fetch** over one shared memory port
+- **4 general-purpose registers**: R0, R1, R2, R3
+- **1 flag**: Z (zero)
+
+Instruction format:
+
+```
+ Byte 0:  opcode[3:0] | rd[1:0] | rs[1:0]
+ Byte 1:  imm8
+ Byte 2:  addr16[15:8]
+ Byte 3:  addr16[7:0]
+```
+
+- `LDI` uses `imm8`
+- `LD`, `ST`, `JMP`, and `JZ` use the full `addr16`
+- Sequential execution advances `pc` by 4 bytes
+- Jump targets should be 4-byte aligned
 
 ## License
 
